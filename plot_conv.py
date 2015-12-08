@@ -8,21 +8,21 @@ import  unNormalizedMUB as nmub
 reload(nmub)
 
 #omega(hvac,dc,bk)
-omega=np.array([15.0,0.1, 0.3*1e-3]) #0.3$/KWh
+omega=np.array([0.140*0.1,1.5*0.3,0.3*200]) #0.3$/KWh
 #omega=np.array([0,1.0, 0.3*1e-3]) #set baseline1
 #wear and tear cost
-omega_wat=np.array([0.1,0.3,0.5])
+omega_wat=np.array([0.5,0.5,0.5])
 #sla weight
-omega_sla=np.array([0.7,0.5,0.6])
+omega_sla=np.array([0.5,0.5,0.5])
 
 
 hvac= nmub.HVAC(25,omega[0])
 Tnhat=[2.0,4.0,5.0,2.0,5.0]
 hvac.setTn(Tnhat)
 bk=nmub.bkGen(omega[2])
-rho=1
+rho=50
 
-Q=1e6 #Wh ( 1MWh)
+Q=300 #Wh ( 1MWh)
 n=3 #number of offices
 I=3  # number of DCs
 
@@ -36,18 +36,18 @@ nmub.rho=rho
 #hvac.optimizeOfficei(1,5)
 #initialize the datacenter with services rate of each tenant per s and max server
 #nmub.DC(mu,S,omega)
-dc =nmub.DC([3.0, 3.0, 3.0,3.5, 4.5],[2000,2000,2000,2000,2000],omega[1],omega_sla)
+dc =nmub.DC([2.5,2.5,2.5,3.5, 4.5],[2000,2000,2000,2000,2000],omega[1],omega_sla)
 
 #arrival rate
-dc.setlamb([1100.0,1200.0,1300.0,1500.0,1600.0])
+dc.setlamb([1100.0,1100.0,1100.0,1500.0,1600.0])
 #dc.setSwitchSever([200,100,100,200,100])
 #dc.minServer()
 #dc.solx()
 #def __init__(self,sigmai,sigman,e_i,e_n,e_z):
-mub=nmub.operator([1,2,3,4,5],[1,2,3,4,5],100,[1,2,3,4,5],[1,2,3,4,5],200)
+mub=nmub.operator([1,2,3,4,5],[1,2,3,4,5],100,[1,2,3,4,5],[1,2,3,4,5],200,omega)
 #mub.calv()
 #    def updateEn(self,sigman,en_):
-runTime = 20
+runTime = 30
 #
 #
 #
@@ -61,6 +61,7 @@ cost = np.ones((7,runTime))
 
 Tnhat1=np.zeros(runTime)
 Totalcost=np.zeros(runTime)
+
 for i in range(runTime):
     pre=sum(mub.sigmai)+sum(mub.sigman)+mub.sigmaz
     #print('pre',pre)
@@ -73,6 +74,7 @@ for i in range(runTime):
     T[0][i]=hvac.Tn[0]
     T[1][i]=hvac.Tn[1]
     T[2][i]=hvac.Tn[2]
+    #def updateEi(self,sigmai,ei_):
     dc.updateEi(mub.sigmai,mub.e_i)
     s[0][i]=dc.s[0]
     s[1][i]=dc.s[1]
@@ -86,11 +88,17 @@ for i in range(runTime):
     #    def updateEz(self,sigmaz,ez_):
     bk.updateEz(mub.sigmaz,mub.e_z)
     energy[6][i] = bk.ez
+    #def updateehat(self, ei,en,ez):
+    mub.updateehat(dc.e,hvac.e,bk.ez)
 
-    mub.updateehat(hvac.e,dc.e,bk.ez)
 
-
-    mub.updateSigma(hvac.e,dc.e,bk.ez)
+    
+    mub.tempei=dc.e
+    mub.tempen=hvac.e
+    mub.tempez=bk.ez     
+    #mub.update_e()
+    #  def updateSigma(self, ei,en,ez):
+    mub.updateSigma(dc.e,hvac.e,bk.ez)
     sigma[0][i] = mub.sigman[0]
     sigma[1][i] = mub.sigman[1]
     sigma[2][i] = mub.sigman[2]
@@ -109,8 +117,8 @@ for i in range(runTime):
     cost[6][i]=bk.bgCost()
 
     curr=sum(mub.sigmai)+sum(mub.sigman)+mub.sigmaz
-
-x=np.arange(runTime)
+#
+#x=np.arange(runTime)
 
 def plot_lines(datas, numb_of_line, markerstyle, labels, title ):
    for line in range(numb_of_line):
@@ -120,7 +128,7 @@ def plot_lines(datas, numb_of_line, markerstyle, labels, title ):
    plt.show()
 
 labels = ['Office 1','Office 2','Office 3','DC 1','DC 2','DC 3','BK']
-plot_lines(energy*1e-6,7,".",labels,"Energy(MWh)")
+plot_lines(energy,7,".",labels,"Energy(MWh)")
 plot_lines(sigma,7,"+",labels,"Sigma")
 labels = ['Office 1','Office 2','Office 3','DC 1','DC 2','DC 3','BK']
 plot_lines(cost,7,"+",labels,"Cost")

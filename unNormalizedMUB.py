@@ -4,7 +4,7 @@ from scipy.optimize import fsolve
 import matplotlib.pyplot as plt
 
 rho=1
-Q=5000
+Q=0
 n=3  #number of offices
 I=3  # number of DCs
 omega_wat=[1,1,1]
@@ -30,9 +30,9 @@ class HVAC:
     """__init__() functions as the class constructor"""
     def __init__(self, Tc=None,omegaCf=None):
         self.omegaCf=omegaCf
-        self.G=[1.1, 1.2, 1.3, 1.4, 1.5]
-        self.Kb=np.array([70.5, 261.5, 350.0, 201, 249])*3600/77 # 77  is the average temperature (K)
-        self.M=0.14
+        self.G=[1.7, 1.2, 1.2, 1.4, 1.5]
+        self.Kb=np.array([400.5,200.5,200.5])/1000 # 77  is the average temperature (K)
+        self.M=0.05
         self.Tc=Tc
         self.e=np.zeros(n)
         self.Tn=np.zeros(n)
@@ -75,21 +75,26 @@ class HVAC:
     def enReduc(self):
         sumE=0
         for i in range (n):
-            sumE=self.Kb[i]*(self.Ti[i]-self.Tc)
+            sumE=self.Kb[i]/self.M*(self.Ti[i]-self.Tc)
         return sumE
 
     def updateEn(self,sigman,en_):
         Kn=np.zeros(n)
         tempTn=np.zeros(n)
         #print(en_)
-        for i in range(n):
-            Tmax=(3-self.G[i])/self.k
-            Kn[i]=self.Kb[i]/self.M
-            self.e[i]=en_[i]+(sigman[i]/rho)-(self.omegaCf/rho)*(self.k/(Kn[i]))
-            
-            if self.e[i]<0:
-                self.e[i]=0
-            tempTn[i]=self.e[i]/Kn[i]
+        if self.omegaCf==0:
+            self.e=[0,0,0]
+        else:
+            for i in range(n):
+                Tmax=(3-self.G[i])/self.k
+                Kn[i]=self.Kb[i]/(self.M)
+                self.e[i]=en_[i]+(sigman[i]/rho)-(self.omegaCf/rho)*(self.k/(Kn[i]))
+                
+                if self.e[i]<0:
+                    self.e[i]=0
+                if self.e[i]>(6.5*Kn[i]):
+                    self.e[i]=6.5*Kn[i]
+                tempTn[i]=self.e[i]/Kn[i]
         #print('en',self.e)
         self.setTn(tempTn)
         #self.userComfCost()
@@ -116,7 +121,7 @@ class DC:
 
         self.D=1 # SLA threshold delay per second
         self.omegadc=omegadc
-        self.gamma=np.array([200*1.2,200*1.3,200*1.4])
+        self.gamma=np.array([0.200*1.2,0.200*1.2,0.200*1.2])
         self.mu=mu
         self.S=S
         self.qi=200
@@ -136,7 +141,7 @@ class DC:
     def enReduc(self):
         # power consumption of active server
 
-        return qi*sum(self.s)
+        return qi*sum(self.s)/1000.0
 
     """ set number of arrival rate lambda"""
     def setlamb(self,lamb):
@@ -204,7 +209,7 @@ class DC:
 #            sigma=sigmai[i]            
 #            tpmei_=ei_[i]
 #            print('kq',(tpmei_+(sigma/rho)-(self.omegadc/rho)*(alpha[i]+(1-alpha[i])*((self.lamb[i])**2)/(((self.S[i]-(temp/self.gamma))*self.mu[i]-self.lamb[i])**2))/self.gamma))
-#            print('x',temp)
+            #print('x',temp)
             
             self.e[i]=temp
             if self.e[i]<0:
@@ -242,71 +247,147 @@ class bkGen:
 
 #####################################
 class operator:
-
+    
     sigmai=np.zeros(I)
     sigman=np.zeros(n)
     sigmaz=0
     e_i=np.zeros(I)
     e_n=np.zeros(n)
     e_z=0
-
+    tempen=np.zeros(n)
+    tempei=np.zeros(I)    
+    tempez=0
+    omega=[0,0,0]
     """__init__() functions as the class constructor"""
-    def __init__(self,sigmai,sigman,sigmaz,e_i,e_n,e_z):
+    def __init__(self,sigmai,sigman,sigmaz,e_i,e_n,e_z,omega):
         self.sigmai=sigmai
         self.sigman=sigman
         self.e_i=e_i
         self.e_n=e_n
         self.e_z=e_z
         self.sigmaz=sigmaz
-
+        self.tempen=np.zeros(n)
+        self.tempei=np.zeros(I)    
+        self.tempez=0
+        self.omega=omega
     def updateehat(self, ei,en,ez):
         v=fsolve(self.funcv, [1],args=(ei,en,ez))
-        #print(ei,en,ez)
         #print(v)
+        
         for i in range(I):
             self.e_i[i]=ei[i]-(v+self.sigmai[i])/rho
             if self.e_i[i]<0:
                 self.e_i[i]=0.0
-
+        #print(self.e_i)
         for i in range(n):
             self.e_n[i]=en[i]-(v+self.sigman[i])/rho
             if self.e_n[i]<0:
                 self.e_n[i]=0.0
-
+        #print(self.e_n)
         self.e_z=ez-(v+self.sigmaz)/rho
         if self.e_z<0:
             self.e_z=0
-        #print(self.e_i,self.e_n,self.e_z)
+        #print(self.e_z)
+        #print(sum(self.e_i)+sum(self.e_n)+self.e_z)
     def updateSigma(self, ei,en,ez):
-
-        for i in range(I):
-            self.sigmai[i]=self.sigmai[i]+rho*(self.e_i[i]-ei[i])
-
-        for i in range(n):
-            self.sigman[i]=self.sigman[i]+rho*(self.e_n[i]-en[i])
+        if self.omega[1]==0:
+            self.sigmai=[0,0,0]
+        else:
+            for i in range(I):
+                self.sigmai[i]=self.sigmai[i]+rho*(self.e_i[i]-ei[i])
+        if self.omega[0]==0:
+            self.sigman=[0,0,0]
+        else:
+            for i in range(n):
+                self.sigman[i]=self.sigman[i]+rho*(self.e_n[i]-en[i])
 
         self.sigmaz=self.sigmaz+rho*(self.e_z-ez)
         #print(self.sigman,self.sigmai,self.sigmaz)
 
     def funcv(self,v,ei,en,ez):
         tempi=np.zeros(I)
-        tempn=np.zeros(n)
-
+        tempn=np.zeros(n)        
+            
         for i in range(I):
-            tempi[i]=(v+self.sigmai[i])/rho
+            if self.omega[1]==0:
+                tempi[i]=0
+                ei[i]=0
+            else:
+                tempi[i]=(v+self.sigmai[i])/rho
+                
             
         for i in range(n):
-            tempn[i]=(v+self.sigman[i])/rho
+            if self.omega[0]==0:
+                tempn[i]==0
+                en[i]=0
+            else:
+                tempn[i]=(v+self.sigman[i])/rho
         
 
-        res= (sum(ei)+sum(en)+ez)-(sum(tempi)+sum(tempn)+(v+self.sigmaz)/rho)-Q
+        res= (sum(ei)+sum(en)+ez)-(sum(tempi)+sum(tempn)+(sum(v)+self.sigmaz)/rho)-Q      
         return res
         #return((sum(ei)+sum(en)+ez)-(v[0]*self.sigman[0])/rho-(v[1]*self.sigman[1])/rho)
-
+    
+    def funcv2(self,v,e,sigma):
+        res= sum(e)-(v+sum(sigma))/rho-Q
+        return res
+        
     def calv(self):        
         x0 = fsolve(self.funcv, [1,1],args=([1,1,1],[1,1,1],1))
         return x0
-
+    def f(self,x): 
+        #hvac cost
+        cost=0.0
+        delten=np.zeros(n)
+        deltei=np.zeros(I)
+        
+        for i in range(0,n):            
+            cost=cost+x[i]*self.sigman[i]
+            delten[i]=x[i]-self.tempen[i]
+        for i in range(n,n+I):            
+            cost=cost+x[i]*self.sigmai[i-n]
+            deltei[i-n]=x[i]-self.tempei[i-n]
+        
+        return cost+x[n+I]*self.sigmaz+(rho/2.0)*((sum(delten)+sum(deltei)+x[n+I]-self.tempez)**2)
+        
+    def con_ehat(self,x):       
+        return sum(x)-Q
+    def con_pos1(self,x):
+        return x[0]-0
+    def con_pos2(self,x):
+        return x[1]-0
+    def con_pos3(self,x):
+        return x[2]-0
+    def con_pos4(sefl,x):
+        return x[3]-0
+    def con_pos5(self,x):
+        return x[4]-0
+    def con_pos6(self,x):
+        return x[5]-0
+    def con_pos7(self,x):
+        return x[6]-0
+        
+    def update_e(self):
+        cons=[  {'type':'eq', 'fun': self.con_ehat},                       
+            {'type':'ineq','fun':self.con_pos1},
+            {'type':'ineq','fun':self.con_pos2},
+            {'type':'ineq','fun':self.con_pos3},
+            {'type':'ineq','fun':self.con_pos4},
+            {'type':'ineq','fun':self.con_pos5},
+            {'type':'ineq','fun':self.con_pos6},
+            {'type':'ineq','fun':self.con_pos7}
+          ]        
+        x_min = optimize.minimize(self.f,[1,1,1,1,1,1,1],constraints=cons)
+        
+        for i in range(0,(n+I+1)):
+            if i<n:
+                self.e_n[i]=x_min.x[i]
+            if i<I+n and i>=n:
+                self.e_i[i-n]=x_min.x[i]
+            if i==n+I:
+                self.e_z=x_min.x[i]
+            
+        return x_min.x
 ################################################
 def saveFile(filename,obj):
     import pickle
@@ -321,3 +402,4 @@ def loadFile(filename,obj):
     output.close()
     return obj
 ################################################
+
