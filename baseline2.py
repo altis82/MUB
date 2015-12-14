@@ -7,7 +7,7 @@ import string
 import  unNormalizedMUB as nmub
 reload(nmub)
 
-omega=np.array([0.140*0.01,1.5*0.03,0.3*20]) #0.3$/KWh
+omega=np.array([.5*0.5,0.1/30,0.03]) #0.3$/KWh
 #omega=np.array([0,1.0, 0.3*1e-3]) #set baseline1
 #wear and tear cost
 omega_wat=np.array([0.5,0.5,0.5])

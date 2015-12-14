@@ -7,7 +7,7 @@ import string
 import  unNormalizedMUB as nmub
 reload(nmub)
 
-omega=np.array([0.140*0.01,1.5*0.03,0.3*20]) #0.3$/KWh
+omega=np.array([1.5*0.5,0.1/30,0.03]) #0.3$/KWh
 #omega=np.array([0,1.0, 0.3*1e-3]) #set baseline1
 #wear and tear cost
 omega_wat=np.array([0.5,0.5,0.5])
@@ -136,19 +136,24 @@ for t in range(100):
 
 ################################################
 nmub.saveFile('DANE.p',totalcost)
-#plt.plot(totalcost)
+plt.plot(totalcost)
 
 labels = ['Office 1','Office 2','Office 3','DC 1','DC 2','DC 3','BK']
-plot_lines(energy,7,".",labels,"Energy")
-
-
-def plot_lines(datas, numb_of_line, markerstyle, labels, title ):
-   for line in range(numb_of_line):
-       plt.plot(datas[line], marker = markerstyle, markersize=4, label=labels[line])
-   plt.legend(loc=1)
-   plt.title(title)
-   plt.show()
-
+def totalCost(data,opt):
+    #
+    fig=plt.figure(figsize=(6,3.5))  
+    
+    plt.plot(data, color='black',marker = '^', markersize=3, label='Total cost')
+    #optimal value    
+    plt.plot(np.ones(runTime)*opt,color='black',ls='--', markersize=4, label='Optimal')
+    plt.xlim([0,runTime])
+    plt.ylim([35,60])
+    plt.legend(loc=1)
+    plt.xlabel('Iterations')
+    plt.ylabel('Total cost')
+    plt.show()
+  
+    #fig.savefig('DANE_conv.pdf')
 
 #labels = ['Office 1','Office 2','Office 3','DC 1','DC 2','DC 3','BK']
 #plot_lines(energy,7,".",labels,"Energy")

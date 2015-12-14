@@ -2,6 +2,7 @@ import numpy as np
 from scipy import optimize
 from scipy.optimize import fsolve
 import matplotlib.pyplot as plt
+import cvxpy as cvx
 
 rho=1
 Q=0
@@ -31,7 +32,7 @@ class HVAC:
     def __init__(self, Tc=None,omegaCf=None):
         self.omegaCf=omegaCf
         self.G=[1.7, 1.2, 1.2, 1.4, 1.5]
-        self.Kb=np.array([400.5,200.5,200.5])/1000 # 77  is the average temperature (K)
+        self.Kb=np.array([300.5,200.5,200.5])/1000 # 77  is the average temperature (K)
         self.M=0.05
         self.Tc=Tc
         self.e=np.zeros(n)
@@ -57,8 +58,8 @@ class HVAC:
 
         for i in range (n):
             #Tmax=(3.0-self.G[i])/self.k
-            if(self.Tn[i]<0):
-                self.Tn[i]=0
+            if(self.Tn[i]>6.50):
+                self.Tn[i]=6.5
                 self.L[i]=3
             else:
                 self.Ln[i]=self.k*self.Tn[i]
@@ -113,10 +114,11 @@ class DC:
     e=np.zeros(I)
     #omegadc=0.3
     omegasla=np.zeros(I)
+    omegawat=np.zeros(I)
     gamma=np.zeros(I)
     qi=200
     """__init__() functions as the class constructor"""
-    def __init__(self,mu,S,omegadc,omegasla):
+    def __init__(self,mu,S,omegadc,omegasla,omegawat):
         # number of tenant
 
         self.D=1 # SLA threshold delay per second
@@ -197,6 +199,21 @@ class DC:
         return x-(ei_+(sigma/rho)-(self.omegadc/rho)*(omega_wat[i]+(self.omegasla[i])*((self.lamb[i])**2)/(((self.S[i]-(x/self.gamma[i]))*self.mu[i]-self.lamb[i])**2))/self.gamma[i])
 
 
+    def updateEi2(self,sigmai,ei_):
+        sigmai=np.array(sigmai)
+        ei_=np.array(ei_)
+        ei=cvx.Variable(I)
+        si=cvx.Variable(I)
+        constraints+=[0<=si]
+        slacost=cvx.sum_entries(self.omegasla*cvx.mul_elemwise(self.lamb,cvx.inv_pos(self.mu-cvx.mul_elemwise(self.lamb,cvx.inv_pos(self.S-si)))))
+        for i in range(I):
+            constraints+=[ei[i]==self.gamma[i]*si[i]]
+        objective = cvx.Minimize(-sigmai*ei+self.omegadc*(slacost+watcost)+rho/2*cvx.sum_squares(ei-(ei_)))
+        prob = cvx.Problem(objective, constraints)
+        result = prob.solve()
+
+        print ei.value.A1
+        self.e=ei.value.A1
 
     def updateEi(self,sigmai,ei_):
 
@@ -205,7 +222,7 @@ class DC:
         maxe=np.zeros(I)
         for i in range(I):
             maxe[i]=(self.S[i]-mins[i])*self.gamma[i]
-            temp=fsolve(self.funcs, [1], args=(ei_[i],sigmai[i],i,))
+            temp=fsolve(self.funcs, [self.e[i]], args=(ei_[i],sigmai[i],i,))
 #            sigma=sigmai[i]            
 #            tpmei_=ei_[i]
 #            print('kq',(tpmei_+(sigma/rho)-(self.omegadc/rho)*(alpha[i]+(1-alpha[i])*((self.lamb[i])**2)/(((self.S[i]-(temp/self.gamma))*self.mu[i]-self.lamb[i])**2))/self.gamma))
@@ -238,12 +255,7 @@ class bkGen:
         self.ez=self.ez+sigmaz/rho-self.omegabg/rho
         if self.ez<0:
             self.ez=0
-        # if self.ez>Q:
-        #     self.ez=Q
-        # else:
-        #     if self.ez<0:
-        #         self.ez=0
-        #print(self.ez)
+
 
 #####################################
 class operator:
@@ -270,6 +282,62 @@ class operator:
         self.tempei=np.zeros(I)    
         self.tempez=0
         self.omega=omega
+
+    def funcv(self,v,ei,en,ez):
+        tempi=np.zeros(I)
+        tempn=np.zeros(n)
+
+        for i in range(I):
+            if self.omega[1]==0:
+                tempi[i]=0
+                ei[i]=0
+            else:
+                tempi[i]=(v+self.sigmai[i])/rho
+
+        for i in range(n):
+            if self.omega[0]==0:
+                tempn[i]==0
+                en[i]=0
+            else:
+                tempn[i]=(v+self.sigman[i])/rho
+
+        res= (sum(ei)+sum(en)+ez)-(sum(tempi)+sum(tempn)+(sum(v)+self.sigmaz)/rho)-Q
+        return res
+
+    def updateehat2(self,ei,en,ez):
+        ehat =cvx.Variable(n+I+1)
+        sigmatmp=np.zeros(n+I+1)
+        etmp=np.zeros(n+I+1)
+        for i in range(n):
+            sigmatmp[i]=self.sigman[i]
+            etmp[i]=en[i]
+            #etmp[i]=ehat[i]-en[i]
+        for i in range(I):
+            sigmatmp[i]=self.sigmai[i]
+            etmp[i]=ei[i]
+        sigmatmp[I+n]=self.sigmaz
+        etmp[n+I]=ez
+
+        objective = cvx.Minimize(sigmatmp*ehat+rho/2*cvx.norm2((ehat-etmp)))
+        constraints=[sum(ehat)==Q,0<=ehat]
+
+        prob = cvx.Problem(objective, constraints)
+
+        result = prob.solve()
+
+        #print ehat.value.A1
+        for i in range(0,(n+I+1)):
+            if i<n:
+                self.e_n[i]=ehat.value.A1[i]
+
+            if i<I+n and i>=n:
+                self.e_i[i-n]=ehat.value.A1[i]
+
+            if i==n+I:
+                self.e_z=ehat.value.A1[i]
+
+        print(ehat.value.A1)
+
     def updateehat(self, ei,en,ez):
         v=fsolve(self.funcv, [1],args=(ei,en,ez))
         #print(v)
@@ -302,92 +370,10 @@ class operator:
                 self.sigman[i]=self.sigman[i]+rho*(self.e_n[i]-en[i])
 
         self.sigmaz=self.sigmaz+rho*(self.e_z-ez)
-        #print(self.sigman,self.sigmai,self.sigmaz)
+        print(self.sigman,self.sigmai,self.sigmaz)
 
-    def funcv(self,v,ei,en,ez):
-        tempi=np.zeros(I)
-        tempn=np.zeros(n)        
-            
-        for i in range(I):
-            if self.omega[1]==0:
-                tempi[i]=0
-                ei[i]=0
-            else:
-                tempi[i]=(v+self.sigmai[i])/rho
-                
-            
-        for i in range(n):
-            if self.omega[0]==0:
-                tempn[i]==0
-                en[i]=0
-            else:
-                tempn[i]=(v+self.sigman[i])/rho
-        
 
-        res= (sum(ei)+sum(en)+ez)-(sum(tempi)+sum(tempn)+(sum(v)+self.sigmaz)/rho)-Q      
-        return res
-        #return((sum(ei)+sum(en)+ez)-(v[0]*self.sigman[0])/rho-(v[1]*self.sigman[1])/rho)
-    
-    def funcv2(self,v,e,sigma):
-        res= sum(e)-(v+sum(sigma))/rho-Q
-        return res
-        
-    def calv(self):        
-        x0 = fsolve(self.funcv, [1,1],args=([1,1,1],[1,1,1],1))
-        return x0
-    def f(self,x): 
-        #hvac cost
-        cost=0.0
-        delten=np.zeros(n)
-        deltei=np.zeros(I)
-        
-        for i in range(0,n):            
-            cost=cost+x[i]*self.sigman[i]
-            delten[i]=x[i]-self.tempen[i]
-        for i in range(n,n+I):            
-            cost=cost+x[i]*self.sigmai[i-n]
-            deltei[i-n]=x[i]-self.tempei[i-n]
-        
-        return cost+x[n+I]*self.sigmaz+(rho/2.0)*((sum(delten)+sum(deltei)+x[n+I]-self.tempez)**2)
-        
-    def con_ehat(self,x):       
-        return sum(x)-Q
-    def con_pos1(self,x):
-        return x[0]-0
-    def con_pos2(self,x):
-        return x[1]-0
-    def con_pos3(self,x):
-        return x[2]-0
-    def con_pos4(sefl,x):
-        return x[3]-0
-    def con_pos5(self,x):
-        return x[4]-0
-    def con_pos6(self,x):
-        return x[5]-0
-    def con_pos7(self,x):
-        return x[6]-0
-        
-    def update_e(self):
-        cons=[  {'type':'eq', 'fun': self.con_ehat},                       
-            {'type':'ineq','fun':self.con_pos1},
-            {'type':'ineq','fun':self.con_pos2},
-            {'type':'ineq','fun':self.con_pos3},
-            {'type':'ineq','fun':self.con_pos4},
-            {'type':'ineq','fun':self.con_pos5},
-            {'type':'ineq','fun':self.con_pos6},
-            {'type':'ineq','fun':self.con_pos7}
-          ]        
-        x_min = optimize.minimize(self.f,[1,1,1,1,1,1,1],constraints=cons)
-        
-        for i in range(0,(n+I+1)):
-            if i<n:
-                self.e_n[i]=x_min.x[i]
-            if i<I+n and i>=n:
-                self.e_i[i-n]=x_min.x[i]
-            if i==n+I:
-                self.e_z=x_min.x[i]
-            
-        return x_min.x
+
 ################################################
 def saveFile(filename,obj):
     import pickle
@@ -402,4 +388,25 @@ def loadFile(filename,obj):
     output.close()
     return obj
 ################################################
-
+#hvac=HVAC(25,1)
+#T=np.zeros(6)
+#
+#s=np.zeros(6)
+#for i in range(0,6):
+#    hvac.setTn([i,i,i])
+#    s[i]=hvac.userComfCost()
+#
+#
+#dc =DC([2.5,4.5,6.5,3.5, 4.5],[2000,2000,2000,2000,2000],0.01,[0.5,0.5,0.5])
+#dc.setlamb([1100.0,1100.0,1100.0,1500.0,1600.0])
+#si=np.zeros(6)
+#bk=np.zeros(6)
+#for i in range(0,6):
+#    dc.setSwitchSever([i*100,i*100,i*100])
+#    si[i]=dc.dcCost()
+#    bk[i]=0.3*i*10
+#plt.plot(si,label='dc')
+#plt.plot(s,label='hvac')
+#plt.plot(bk,label='bk')
+#plt.legend(loc=1)
+#plt.show()
