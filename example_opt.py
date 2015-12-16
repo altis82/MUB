@@ -34,18 +34,16 @@ lamb=[1000,1000,1000]
 ei_=np.array([100,100,100])
 
 ei =cvx.Variable(I)
-slacost=cvx.Variable(I)
-watcost=cvx.Variable(I)
 si=cvx.Variable(I)
 constraints=[0<=ei]
 constraints+=[0<=si]
+slacost=cvx.sum_entries(0.5*cvx.mul_elemwise(lamb,cvx.inv_pos(mu-cvx.mul_elemwise(lamb,cvx.inv_pos(S-si)))))
+watcost=cvx.sum_entries(0.5*si)
 for i in range(I):
-    constraints+=[slacost[i]==0.5*lamb[i]*(cvx.inv_pos(mu[i]-lamb[i]*cvx.inv_pos((S[i]-si[i]))))]
-    constraints+=[watcost[i]==0.5*si[i]]
     constraints+=[ei[i]==0.2*si[i]]
-objective = cvx.Maximize(sigmai*ei+0.3*(sum(slacost)+sum(watcost))+0.5/2*cvx.sum_squares(ei-(ei_)))
+objective = cvx.Minimize(-sigmai*ei+0.3*(slacost+watcost)+0.5/2*cvx.sum_squares(ei-(ei_)))
 prob = cvx.Problem(objective, constraints)
-result = prob.solve()
+result = prob.solve(solver=cvx.ECOS)
 print result
 
 

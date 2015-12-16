@@ -3,16 +3,22 @@ from scipy import optimize
 from scipy.optimize import fsolve
 import matplotlib.pyplot as plt
 import cvxpy as cvx
-
+import string
+import pickle
+omega=np.array([0.5,0.01/5,0.3])
 rho=1
 Q=0
 n=3  #number of offices
 I=3  # number of DCs
-omega_wat=[1,1,1]
+omega_wat=np.array([0.5,0.5,0.5])
+#sla weight
+omega_sla=np.array([0.5,0.5,0.5])
+runTime = 100
+slv=cvx.SCS
 class HVAC:
 
     G=np.zeros(n) # heat gain for n office
-    K=np.zeros(n) # conductive of n office
+    #K=np.zeros(n) # conductive of n office
     M=0.14 # energy transform
     Tn=np.zeros(n) # temperature indoor of n office
     Tc=0 # temperature outdoor
@@ -31,7 +37,7 @@ class HVAC:
     """__init__() functions as the class constructor"""
     def __init__(self, Tc=None,omegaCf=None):
         self.omegaCf=omegaCf
-        self.G=[1.7, 1.2, 1.2, 1.4, 1.5]
+        self.G=[1.7, 1.2, 1.2]
         self.Kb=np.array([300.5,200.5,200.5])/1000 # 77  is the average temperature (K)
         self.M=0.05
         self.Tc=Tc
@@ -79,10 +85,30 @@ class HVAC:
             sumE=self.Kb[i]/self.M*(self.Ti[i]-self.Tc)
         return sumE
 
+    def updateEn2(self,sigman,en_):
+        sigman=np.array(sigman)
+        en_=np.array(en_)
+        en=cvx.Variable(n)
+        T=cvx.Variable(n)
+        constraints=[0<=T]
+
+        comfCost=self.omegaCf*cvx.sum_entries(np.array(self.G)+self.k*T)
+        #print (comfCost)
+        for i in range(n):
+            constraints+=[en[i]==(self.Kb[i]/self.M)*T[i]]
+        objective = cvx.Maximize(np.transpose(sigman)*en-comfCost-rho/2*cvx.sum_squares(en-np.array(en_)))
+        prob = cvx.Problem(objective, constraints)
+        result = prob.solve(solver=slv)
+
+
+        #print ("obj",result)
+        self.e=en.value.A1
+        #print("En",self.e)
+
     def updateEn(self,sigman,en_):
         Kn=np.zeros(n)
         tempTn=np.zeros(n)
-        #print(en_)
+        print("input",sigman,en_)
         if self.omegaCf==0:
             self.e=[0,0,0]
         else:
@@ -204,17 +230,31 @@ class DC:
         ei_=np.array(ei_)
         ei=cvx.Variable(I)
         si=cvx.Variable(I)
-        constraints+=[0<=si]
-        slacost=cvx.sum_entries(self.omegasla*cvx.mul_elemwise(self.lamb,cvx.inv_pos(self.mu-cvx.mul_elemwise(self.lamb,cvx.inv_pos(self.S-si)))))
+        constraints=[0<=si]
+        slacost=cvx.sum_entries(cvx.mul_elemwise(self.lamb,cvx.inv_pos(self.mu-cvx.mul_elemwise(self.lamb,cvx.inv_pos(self.S-si)))))
+        watcost=np.array(self.omegawat)*si
         for i in range(I):
             constraints+=[ei[i]==self.gamma[i]*si[i]]
-        objective = cvx.Minimize(-sigmai*ei+self.omegadc*(slacost+watcost)+rho/2*cvx.sum_squares(ei-(ei_)))
+        objective = cvx.Minimize(-np.transpose(sigmai)*ei+self.omegadc*(slacost+watcost)+rho/2*cvx.sum_squares(ei-np.array(ei_)))
         prob = cvx.Problem(objective, constraints)
-        result = prob.solve()
+        result = prob.solve(solver=slv)
 
-        print ei.value.A1
+        #print ei.value.A1
+        #print result
         self.e=ei.value.A1
+        mins=self.minServer()
+        maxe=np.zeros(I)
+        for i in range(I):
+            maxe[i]=(self.S[i]-mins[i])*self.gamma[i]
+            if self.e[i]<0:
+                self.e[i]==0
+            else:
+                if self.e[i]>maxe[i]:
+                    self.e[i]=maxe[i]
+                    print('\nWarning: reducing si lower than minimum active server!!!!')
+        #print("ei:",self.e)
 
+        self.setSwitchSever(self.e)
     def updateEi(self,sigmai,ei_):
 
         stemp=np.zeros(I)
@@ -244,18 +284,28 @@ class bkGen:
     ez=0
     omegabg=0.3
     def __init__(self,omegabg=None):
-        self.ez=20
+        self.ez=0
         self.omegabg=omegabg
     def bgCost(self):
 
         return self.omegabg*self.ez
 
+    def updateEz2(self,sigmaz,ez_):
+
+        ez=cvx.Variable()
+        constraints=[0<=ez]
+        objective = cvx.Maximize(np.array(sigmaz)*ez-ez*self.omegabg-rho/2*cvx.square(ez-ez_))
+        prob = cvx.Problem(objective, constraints)
+        result = prob.solve(solver=slv)
+        #print(ez.value)
+        self.ez=ez.value
+
     def updateEz(self,sigmaz,ez_):
 
-        self.ez=self.ez+sigmaz/rho-self.omegabg/rho
+        self.ez=ez_+sigmaz/rho-self.omegabg/rho
         if self.ez<0:
             self.ez=0
-
+        print("ez",self.ez)
 
 #####################################
 class operator:
@@ -270,8 +320,9 @@ class operator:
     tempei=np.zeros(I)    
     tempez=0
     omega=[0,0,0]
+    setbaseline=0
     """__init__() functions as the class constructor"""
-    def __init__(self,sigmai,sigman,sigmaz,e_i,e_n,e_z,omega):
+    def __init__(self,sigmai,sigman,sigmaz,e_i,e_n,e_z,omega,baseline):
         self.sigmai=sigmai
         self.sigman=sigman
         self.e_i=e_i
@@ -282,7 +333,13 @@ class operator:
         self.tempei=np.zeros(I)    
         self.tempez=0
         self.omega=omega
-
+        self.setbaseline=baseline
+        if self.setbaseline==1:
+            self.sigman=[0,0,0]
+            self.e_n=[0,0,0]
+        if self.setbaseline==2:
+            self.sigmai=[0,0,0]
+            self.e_i=[0,0,0]
     def funcv(self,v,ei,en,ez):
         tempi=np.zeros(I)
         tempn=np.zeros(n)
@@ -313,30 +370,47 @@ class operator:
             etmp[i]=en[i]
             #etmp[i]=ehat[i]-en[i]
         for i in range(I):
-            sigmatmp[i]=self.sigmai[i]
-            etmp[i]=ei[i]
+            sigmatmp[i+n]=self.sigmai[i]
+            etmp[i+n]=ei[i]
         sigmatmp[I+n]=self.sigmaz
         etmp[n+I]=ez
-
-        objective = cvx.Minimize(sigmatmp*ehat+rho/2*cvx.norm2((ehat-etmp)))
+        #print("sigma",sigmatmp)
+        print("e",etmp)
+        objective = cvx.Minimize(sigmatmp*ehat+rho/2*cvx.sum_squares((ehat-etmp)))
         constraints=[sum(ehat)==Q,0<=ehat]
 
+        if self.setbaseline==1:
+            for i in range(n):
+                constraints+=[ehat[i]==0]
+        else:
+            if self.setbaseline==2:
+                for i in range(I):
+                    constraints+=[ehat[n+i]==0]
         prob = cvx.Problem(objective, constraints)
+        #print(prob.status)
+        result = prob.solve(solver=cvx.SCS)
 
-        result = prob.solve()
+        #print(prob.status)
+        #sum(ehat.value.A1)
+        #print result
 
-        #print ehat.value.A1
+
         for i in range(0,(n+I+1)):
             if i<n:
                 self.e_n[i]=ehat.value.A1[i]
-
+                if self.e_n[i]<0:
+                    self.e_n[i]=0
             if i<I+n and i>=n:
+
                 self.e_i[i-n]=ehat.value.A1[i]
+                if self.e_i[i-n]<0:
+                    self.e_i[i-n]=0
 
             if i==n+I:
                 self.e_z=ehat.value.A1[i]
-
-        print(ehat.value.A1)
+                if self.e_z<0:
+                    self.e_z=0
+        #print(self.e_n,self.e_i,self.e_z)
 
     def updateehat(self, ei,en,ez):
         v=fsolve(self.funcv, [1],args=(ei,en,ez))
@@ -357,6 +431,7 @@ class operator:
             self.e_z=0
         #print(self.e_z)
         #print(sum(self.e_i)+sum(self.e_n)+self.e_z)
+
     def updateSigma(self, ei,en,ez):
         if self.omega[1]==0:
             self.sigmai=[0,0,0]
@@ -370,24 +445,124 @@ class operator:
                 self.sigman[i]=self.sigman[i]+rho*(self.e_n[i]-en[i])
 
         self.sigmaz=self.sigmaz+rho*(self.e_z-ez)
-        print(self.sigman,self.sigmai,self.sigmaz)
+        #print(self.sigman,self.sigmai,self.sigmaz)
 
 
+def MUB(lamb,baseline,hvac,dc,bk,mub):
+    # hvac= HVAC(25,omega[0])
+    # Tnhat=[2.0,4.0,5.0,2.0,5.0]
+    # hvac.setTn(Tnhat)
+    # bk=bkGen(omega[2])
+    # dc =DC([2.5,4.,4.],[2000,2000,2000],omega[1],omega_sla,omega_wat)
+    #
+    # mub=operator([1,2,3],[1,2,3],100,[1,2,3],[1,2,3],200,omega,baseline)
+    dc.setlamb([lamb[0],lamb[1],lamb[2]])
+    mub.setbaseline=baseline
 
+    bk_totalcost= np.zeros(runTime)
+    T=np.ones((3,runTime))
+    s=np.ones((3,runTime))
+    sigma = np.ones((7,runTime))
+    Totalcost=np.zeros(runTime)
+    bk_totalcost= np.zeros(runTime)
+    energy = np.ones((7,runTime))
+    cost = np.ones((7,runTime))
+    Tnhat1=np.zeros(runTime)
+    mub.setbaseline=baseline
+
+    for i in range(runTime):
+
+        hvac.updateEn2(mub.sigman,mub.e_n)
+        #    def updateEi(self,sigmai,ei_):
+        if baseline==1:
+            hvac.e=[0,0,0]
+        energy[0][i] = hvac.e[0]
+        energy[1][i] = hvac.e[1]
+        energy[2][i] = hvac.e[2]
+        T[0][i]=hvac.Tn[0]
+        T[1][i]=hvac.Tn[1]
+        T[2][i]=hvac.Tn[2]
+        #def updateEi(self,sigmai,ei_):
+        #dc.updateEi(mub.sigmai,mub.e_i)
+        dc.updateEi2(mub.sigmai,mub.e_i)
+        if baseline==2:
+            dc.e=[0,0,0]
+        s[0][i]=dc.s[0]
+        s[1][i]=dc.s[1]
+        s[2][i]=dc.s[2]
+
+        energy[3][i] = dc.e[0]
+        energy[4][i] = dc.e[1]
+        energy[5][i] = dc.e[2]
+
+
+        #    def updateEz(self,sigmaz,ez_):
+        #bk.updateEz(mub.sigmaz,mub.e_z)
+        bk.updateEz2(mub.sigmaz,mub.e_z)
+        energy[6][i] = bk.ez
+        #def updateehat(self, ei,en,ez):
+        #mub.updateehat(dc.e,hvac.e,bk.ez)
+        # def updateehat2(self,ei,en,ez):
+
+        mub.updateehat2(dc.e,hvac.e,bk.ez)
+
+        #  def updateSigma(self, ei,en,ez):
+        mub.updateSigma(dc.e,hvac.e,bk.ez)
+
+        sigma[0][i] = mub.sigman[0]
+        sigma[1][i] = mub.sigman[1]
+        sigma[2][i] = mub.sigman[2]
+
+        sigma[3][i] = mub.sigmai[0]
+        sigma[4][i] = mub.sigmai[1]
+        sigma[5][i] = mub.sigmai[2]
+        sigma[6][i] = mub.sigmaz
+
+        cost[0][i]=hvac.userComfCosti(0)
+        cost[1][i]=hvac.userComfCosti(1)
+        cost[2][i]=hvac.userComfCosti(2)
+        cost[3][i]=dc.dcCosti(0)
+        cost[4][i]=dc.dcCosti(1)
+        cost[5][i]=dc.dcCosti(2)
+        cost[6][i]=bk.bgCost()
+        Totalcost[i]=cost[0][i]+cost[1][i]+cost[2][i]+cost[3][i]+cost[4][i]+cost[5][i]+cost[6][i]
+        #print("total",Totalcost[i])
+    return hvac,dc,bk,energy,cost,Totalcost
 ################################################
 def saveFile(filename,obj):
-    import pickle
+
     output=open(filename, "wb" )
     pickle.dump(obj,output)
     output.close()
     
 def loadFile(filename,obj):
-    import pickle
+
     output=open(filename, "rb" )
     obj=pickle.load(output)    
     output.close()
     return obj
 ################################################
+def trace_lamb():
+    maxtimeslot=60
+    base_lamb=1500
+    trace=np.zeros(maxtimeslot)
+    with open('facebook.csv', 'r') as csvfile:
+        i=0
+        for row in csvfile:
+            if i>=maxtimeslot:
+                break
+            trace[i]=string.atof(row)
+            i=i+1
+
+    #normalize trace
+    trace=np.array(trace)/np.max(trace)
+    #create lambda for DC
+    lamb=np.ones((3,maxtimeslot/3))
+    for i in range(maxtimeslot/3):
+        lamb[0][i]=trace[i]*base_lamb
+        lamb[1][i]=trace[i+10]*base_lamb
+        lamb[2][i]=trace[i+20]*base_lamb
+    return lamb
 #hvac=HVAC(25,1)
 #T=np.zeros(6)
 #

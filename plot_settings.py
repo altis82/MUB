@@ -11,8 +11,14 @@ import pylab, math
 symbols = ['-','--','-.',':','.',',','o','^','v','<','>','s','+','x','D','d','1','2','3','4','h','H','p']
 # Symbols + line
 lps = [k+'-' for k in ['o','^','v','<','>','s','+','x','D','d','1','2','3','4','h','H','p']]
+# Markers
+markers = ['o','x', 's','v','d','^','<','>','+','*','h', 'p']
 # Colors
-colors= ['k','b','g','r','m','y','c','w']
+colors= ['darkorange', 'r','purple', 'g', 'k', 'dodgerblue', 'm','darksalmon','b','y','darkgrey','c']
+#colors= []
+#for name, hex in matplotlib.colors.cnames.iteritems():
+#    colors.append(name)
+
 
 def get_figsize(fig_width_pt):
     inches_per_pt = 1.0/72.0                # Convert pt to inch
@@ -23,6 +29,21 @@ def get_figsize(fig_width_pt):
     return fig_size
 
 # small sized image
+ptiny = {'backend': 'ps',
+          'axes.labelsize': 11,
+          'text.fontsize': 9,
+          'xtick.labelsize': 9,
+          'ytick.labelsize': 9,
+          'legend.borderpad': 0.4,    # empty space around the legend box
+          'legend.fontsize': 7.5,
+          'lines.markersize': 4.5,
+          'lines.linewidth': 1.3,
+          'font.size': 8,
+          'text.usetex': True,
+          'figure.figsize': get_figsize(280)}
+
+
+# small sized image
 psmall = {'backend': 'ps',
           'axes.labelsize': 11,
           'text.fontsize': 9,
@@ -31,6 +52,7 @@ psmall = {'backend': 'ps',
           'legend.borderpad': 0.15,    # empty space around the legend box
           'legend.fontsize': 8,
           'lines.markersize': 5,
+          'lines.linewidth': 1.3,
           'font.size': 8,
           'text.usetex': True,
           'figure.figsize': get_figsize(320)}
@@ -64,6 +86,8 @@ plarge = {'backend': 'ps',
 def set_mode(mode):
     if mode == "small":
         pylab.rcParams.update(psmall)
+    elif mode == "tiny":
+        pylab.rcParams.update(ptiny)
     elif mode == "medium":
         pylab.rcParams.update(pmedium)
     else:
@@ -72,4 +96,4 @@ def set_mode(mode):
 def set_figsize(fig_width_pt):
     pylab.rcParams['figure.figsize'] = get_figsize(fig_width_pt)
 
-pylab.rcParams.update(plarge)
+pylab.rcParams['text.usetex'] = True
